@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Trophy, Clock, Lock, CheckCircle, User, Activity, Settings, Info, Trash2, CalendarDays, ShieldAlert, Medal, ChevronRight, LogOut, KeyRound } from 'lucide-react';
+import { Trophy, Clock, Lock, CheckCircle, User, Users, Activity, Settings, Info, Trash2, CalendarDays, ShieldAlert, Medal, ChevronRight, LogOut, KeyRound } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, doc, getDoc, setDoc, onSnapshot, updateDoc, deleteDoc } from 'firebase/firestore';
@@ -679,6 +679,94 @@ const AdminMatchRow = ({ match, onUpdate }) => {
 }
 
 
+// --- Everyone's Picks (read-only) ---
+// Shows every player's prediction per match. To keep the game fair, a player's
+// pick for a match is only revealed once it can no longer be changed — i.e.
+// the match has kicked off (with locks on) or is finished. Until then, only
+// the viewer sees their own pick. This page never writes any data.
+const AllPicksTab = ({ matches, predictions, users, currentUser, disableLocks }) => {
+  const nameFor = (uid) => users.find(u => u.uid === uid)?.displayName || 'Player';
+  const picksFor = (matchId) => predictions.filter(p => p.matchId === matchId);
+
+  // Total transparency: everyone can see everyone's picks, for every match.
+  const revealed = [...matches].sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
+
+  return (
+    <div className="pb-8 animate-in fade-in duration-500">
+      <div className="mb-8 text-center sm:text-left">
+        <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight mb-2">Everyone's Picks</h2>
+        <p className="text-slate-500 text-sm font-medium">Every player's prediction is visible here, for every match.</p>
+      </div>
+
+      {revealed.length === 0 && (
+        <div className="bg-white rounded-3xl border border-slate-200 p-10 text-center text-slate-500 font-medium mb-8">
+          No predictions have been made yet.
+        </div>
+      )}
+
+      {revealed.map(m => {
+        const isFinished = m.status === 'finished';
+        const rows = picksFor(m.id).map(p => ({
+          uid: p.uid,
+          name: nameFor(p.uid),
+          homeScore: p.homeScore,
+          awayScore: p.awayScore,
+          points: isFinished ? getPoints(p.homeScore, p.awayScore, m.homeScore, m.awayScore) : null,
+        }));
+        if (isFinished) rows.sort((a, b) => b.points - a.points);
+        else rows.sort((a, b) => a.name.localeCompare(b.name));
+
+        return (
+          <div key={m.id} className="bg-white border border-slate-200 rounded-3xl p-5 mb-6">
+            <div className="flex justify-between items-center mb-4 pb-3 border-b border-slate-100">
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
+                <CalendarDays size={14} className="text-slate-400" /> {m.stage}
+              </span>
+              {isFinished ? (
+                <span className="flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full bg-blue-100 text-blue-800"><CheckCircle size={14} /> Full Time</span>
+              ) : (
+                <span className="flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full bg-gray-200 text-gray-600"><Lock size={14} /> Locked</span>
+              )}
+            </div>
+
+            <div className="flex items-center justify-center gap-3 mb-5">
+              <span className="font-extrabold text-slate-800 text-sm sm:text-base text-right flex-1 truncate">{getFlag(m.homeTeam)} {m.homeTeam}</span>
+              <span className={`px-3 py-1 rounded-lg text-sm font-black shrink-0 ${isFinished ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                {isFinished ? `${m.homeScore} - ${m.awayScore}` : 'vs'}
+              </span>
+              <span className="font-extrabold text-slate-800 text-sm sm:text-base text-left flex-1 truncate">{m.awayTeam} {getFlag(m.awayTeam)}</span>
+            </div>
+
+            {rows.length === 0 ? (
+              <p className="text-center text-sm text-slate-400 italic py-3">No predictions for this match.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {rows.map(r => (
+                  <div key={r.uid} className={`flex items-center justify-between rounded-xl px-3 py-2 ${r.uid === currentUser.uid ? 'bg-indigo-50' : 'bg-slate-50'}`}>
+                    <span className="font-bold text-slate-700 text-sm flex items-center gap-2 truncate min-w-0">
+                      <span className="truncate">{r.name}</span>
+                      {r.uid === currentUser.uid && <span className="px-1.5 py-0.5 rounded text-[9px] uppercase font-bold bg-indigo-100 text-indigo-700 tracking-wider shrink-0">You</span>}
+                    </span>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="font-black text-slate-800 text-sm tabular-nums">{r.homeScore}–{r.awayScore}</span>
+                      {isFinished && (
+                        <span className={`text-xs font-bold px-2.5 py-1 rounded-lg ${r.points > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-500'}`}>
+                          {r.points > 0 ? `+${r.points}` : '0'}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+
 // --- Login / Register Screen (name + PIN) ---
 const LoginScreen = ({ onLogin, busy }) => {
   const [name, setName] = useState('');
@@ -927,6 +1015,7 @@ export default function App() {
       <main className="max-w-2xl mx-auto p-4 sm:p-6 pb-32">
          {activeTab === 'matches' && <MatchesTab matches={matches} predictions={predictions} user={user} onSavePrediction={handleSavePrediction} disableLocks={globalSettings?.disableLocks} />}
          {activeTab === 'leaderboard' && <LeaderboardTab users={users} predictions={predictions} matches={matches} currentUser={user} />}
+         {activeTab === 'picks' && <AllPicksTab matches={matches} predictions={predictions} users={users} currentUser={user} disableLocks={globalSettings?.disableLocks} />}
          {activeTab === 'rules' && <RulesTab />}
          {activeTab === 'admin' && isAdmin && <AdminPanel matches={matches} users={users} predictions={predictions} globalSettings={globalSettings} />}
          {activeTab === 'profile' && <ProfileTab user={user} onLogout={handleLogout} />}
@@ -937,6 +1026,7 @@ export default function App() {
          <div className="max-w-md mx-auto bg-white/80 backdrop-blur-xl border border-white shadow-[0_-8px_30px_-10px_rgba(0,0,0,0.1)] rounded-t-3xl sm:rounded-full sm:mb-6 flex justify-around p-2 pointer-events-auto">
             <NavButton icon={<Activity size={22}/>} label="Predict" active={activeTab === 'matches'} onClick={()=>setActiveTab('matches')} />
             <NavButton icon={<Trophy size={22}/>} label="Standings" active={activeTab === 'leaderboard'} onClick={()=>setActiveTab('leaderboard')} />
+            <NavButton icon={<Users size={22}/>} label="Picks" active={activeTab === 'picks'} onClick={()=>setActiveTab('picks')} />
             <NavButton icon={<Info size={22}/>} label="Rules" active={activeTab === 'rules'} onClick={()=>setActiveTab('rules')} />
             <NavButton icon={<User size={22}/>} label="Profile" active={activeTab === 'profile'} onClick={()=>setActiveTab('profile')} />
             {isAdmin && <NavButton icon={<Settings size={22}/>} label="Admin" active={activeTab === 'admin'} onClick={()=>setActiveTab('admin')} />}
@@ -949,7 +1039,7 @@ export default function App() {
 const NavButton = ({ icon, label, active, onClick }) => (
   <button 
     onClick={onClick} 
-    className={`relative flex flex-col items-center justify-center w-16 h-14 rounded-2xl transition-all duration-300 ${active ? 'text-indigo-600 scale-105' : 'text-slate-400 hover:bg-slate-50 hover:text-slate-600'}`}
+    className={`relative flex flex-col items-center justify-center flex-1 min-w-0 max-w-[72px] h-14 rounded-2xl transition-all duration-300 ${active ? 'text-indigo-600 scale-105' : 'text-slate-400 hover:bg-slate-50 hover:text-slate-600'}`}
   >
     {active && <div className="absolute inset-0 bg-indigo-50 rounded-2xl -z-10"></div>}
     {icon}
