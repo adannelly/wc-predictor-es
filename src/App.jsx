@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Trophy, Clock, Lock, CheckCircle, User, Activity, Settings, Info, Trash2, CalendarDays, ShieldAlert, Medal, ChevronRight } from 'lucide-react';
+import { Trophy, Clock, Lock, CheckCircle, User, Activity, Settings, Info, Trash2, CalendarDays, ShieldAlert, Medal, ChevronRight, LogOut, KeyRound } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, onSnapshot, updateDoc, deleteDoc } from 'firebase/firestore';
+import { getFirestore, collection, doc, getDoc, setDoc, onSnapshot, updateDoc, deleteDoc } from 'firebase/firestore';
 
 // --- Firebase Configuration ---
 const userProvidedConfig = {
@@ -22,6 +22,22 @@ const appId = typeof __app_id !== 'undefined' ? __app_id : 'wc-predictor-123';
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+
+// --- Identity helpers (name + PIN accounts) ---
+// A player's identity is their name, not the browser. The name becomes a
+// stable account id so the same person can log in from any device.
+const ACCOUNT_STORAGE_KEY = 'wc_account_id';
+
+// Turn a display name into a Firestore-safe id, e.g. "Adam D" -> "adam_d".
+const slugify = (name) =>
+  name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+
+// Hash the PIN (salted with the account id) so raw PINs never touch the DB.
+async function hashPin(pin, accountId) {
+  const data = new TextEncoder().encode(`wc26:${accountId}:${pin}`);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
 
 // --- Scoring Configuration ---
 // Single source of truth for the scoring system. The Rules tab and all
@@ -350,60 +366,29 @@ const LeaderboardTab = ({ users, predictions, matches, currentUser }) => {
   );
 };
 
-const ProfileTab = ({ user, users }) => {
-   const currentUserDoc = users.find(u => u.uid === user.uid);
-   const [name, setName] = useState(currentUserDoc?.displayName || '');
-   const [saved, setSaved] = useState(false);
+const ProfileTab = ({ user, onLogout }) => (
+   <div className="max-w-md mx-auto pt-4 animate-in slide-in-from-bottom-4 duration-500">
+     <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 text-center relative overflow-hidden">
+        <div className="absolute top-0 left-0 w-full h-24 bg-gradient-to-r from-indigo-500 to-purple-600 opacity-10"></div>
 
-   useEffect(() => {
-     if (currentUserDoc && !name) setName(currentUserDoc.displayName);
-   }, [currentUserDoc]);
+        <div className="w-24 h-24 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner border-4 border-white relative z-10">
+          <User size={40} className="text-indigo-600" />
+        </div>
 
-   const handleSave = async () => {
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), {
-         uid: user.uid,
-         displayName: name || 'Anonymous'
-      }, { merge: true });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
-   }
+        <h2 className="text-2xl font-extrabold text-slate-800 mb-1 relative z-10">{user.displayName}</h2>
+        <p className="text-slate-500 text-sm mb-8 font-medium relative z-10">Signed in. Use the same name and PIN to pick up on any phone or computer.</p>
 
-   return (
-     <div className="max-w-md mx-auto pt-4 animate-in slide-in-from-bottom-4 duration-500">
-       <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 text-center relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-full h-24 bg-gradient-to-r from-indigo-500 to-purple-600 opacity-10"></div>
-          
-          <div className="w-24 h-24 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner border-4 border-white relative z-10">
-            <User size={40} className="text-indigo-600" />
-          </div>
-          
-          <h2 className="text-2xl font-extrabold text-slate-800 mb-2 relative z-10">Player Profile</h2>
-          <p className="text-slate-500 text-sm mb-8 font-medium">Customize how you appear to others on the global leaderboard.</p>
-          
-          <div className="text-left mb-8">
-             <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Display Name</label>
-             <input 
-               type="text" 
-               value={name} 
-               onChange={e=>setName(e.target.value)} 
-               className="w-full bg-slate-50 border-2 border-slate-200 rounded-2xl p-4 font-bold text-slate-800 focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all" 
-               placeholder="Enter your username..." 
-             />
-          </div>
-          
-          <button onClick={handleSave} className="bg-slate-900 hover:bg-black text-white px-4 py-4 rounded-2xl w-full font-bold transition-all shadow-lg hover:shadow-xl active:scale-[0.98] flex items-center justify-center gap-2">
-             Save Profile
-          </button>
-          
-          {saved && (
-            <div className="mt-6 flex items-center justify-center gap-2 text-emerald-600 font-bold text-sm bg-emerald-50 py-3 rounded-xl border border-emerald-100 animate-in fade-in">
-              <CheckCircle size={18} /> Profile updated successfully!
-            </div>
-          )}
-       </div>
+        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 mb-8 text-left flex items-center gap-3">
+           <div className="p-2 bg-indigo-100 rounded-lg text-indigo-600 shrink-0"><Info size={18} /></div>
+           <p className="text-xs text-slate-600 font-medium leading-relaxed">Your predictions and points are tied to this name. Logging in elsewhere with the same name and PIN picks up right where you left off.</p>
+        </div>
+
+        <button onClick={onLogout} className="bg-slate-900 hover:bg-black text-white px-4 py-4 rounded-2xl w-full font-bold transition-all shadow-lg hover:shadow-xl active:scale-[0.98] flex items-center justify-center gap-2">
+           <LogOut size={18} /> Log Out
+        </button>
      </div>
-   );
-};
+   </div>
+);
 
 const RulesTab = () => (
   <div className="max-w-md mx-auto pt-4 animate-in slide-in-from-bottom-4 duration-500">
@@ -625,9 +610,82 @@ const AdminMatchRow = ({ match, onUpdate }) => {
 }
 
 
+// --- Login / Register Screen (name + PIN) ---
+const LoginScreen = ({ onLogin, busy }) => {
+  const [name, setName] = useState('');
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState('');
+
+  const submit = async () => {
+    setError('');
+    const cleanName = name.trim();
+    if (slugify(cleanName).length === 0) { setError('Please enter a name using letters or numbers.'); return; }
+    if (!/^\d{4}$/.test(pin)) { setError('Your PIN must be exactly 4 digits.'); return; }
+    const result = await onLogin(cleanName, pin);
+    if (result && !result.ok) setError(result.error);
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-indigo-800 to-purple-900 flex flex-col items-center justify-center p-6">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <div className="inline-flex bg-white/10 backdrop-blur-md p-4 rounded-2xl border border-white/20 shadow-inner mb-4">
+            <Trophy size={32} className="text-yellow-400" />
+          </div>
+          <h1 className="text-3xl font-black text-white tracking-tight">WC Predictor <span className="text-indigo-300 font-light">26</span></h1>
+          <p className="text-indigo-200 text-sm font-medium mt-3 leading-relaxed">Enter your name and a 4-digit PIN to start. Use the same details to log back in from any device.</p>
+        </div>
+
+        <div className="bg-white rounded-3xl shadow-2xl p-7 space-y-5">
+          <div>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Your Name</label>
+            <input
+              type="text" value={name}
+              onChange={e => setName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') submit(); }}
+              className="w-full bg-slate-50 border-2 border-slate-200 rounded-2xl p-4 font-bold text-slate-800 focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all"
+              placeholder="e.g. Adam"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">4-Digit PIN</label>
+            <input
+              type="password" inputMode="numeric" maxLength={4} value={pin}
+              onChange={e => setPin(e.target.value.replace(/\D/g, ''))}
+              onKeyDown={e => { if (e.key === 'Enter') submit(); }}
+              className="w-full bg-slate-50 border-2 border-slate-200 rounded-2xl p-4 font-bold text-slate-800 tracking-[0.6em] text-center focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all"
+              placeholder="••••"
+            />
+          </div>
+
+          {error && (
+            <div className="text-sm font-bold text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3">{error}</div>
+          )}
+
+          <button
+            onClick={submit} disabled={busy}
+            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-bold py-4 rounded-2xl w-full transition-all shadow-lg shadow-indigo-600/30 active:scale-[0.98] flex items-center justify-center gap-2"
+          >
+            {busy ? <span className="animate-pulse">Connecting...</span> : <><KeyRound size={18} /> Enter Pool</>}
+          </button>
+
+          <p className="text-xs text-slate-400 text-center font-medium leading-relaxed">
+            New name? You'll be registered automatically.<br />Returning? Enter the same name and PIN.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
 // --- Main Application ---
 export default function App() {
-  const [user, setUser] = useState(null);
+  const [firebaseUser, setFirebaseUser] = useState(null);
+  const [activeAccountId, setActiveAccountId] = useState(() => {
+    try { return localStorage.getItem(ACCOUNT_STORAGE_KEY) || null; } catch { return null; }
+  });
+  const [loginBusy, setLoginBusy] = useState(false);
   const [activeTab, setActiveTab] = useState('matches');
   
   const [matches, setMatches] = useState([]);
@@ -638,35 +696,32 @@ export default function App() {
   const [appError, setAppError] = useState(null); 
 
   useEffect(() => {
-    const initAuth = async () => {
+    // Let Firebase restore any saved session FIRST. Only sign in anonymously
+    // if there genuinely is no existing user. This stops the app from minting
+    // a brand-new anonymous account (and a new leaderboard entry) on every
+    // visit, so returning players keep their identity and predictions.
+    const unsubscribe = onAuthStateChanged(auth, async (existingUser) => {
+      if (existingUser) {
+        setFirebaseUser(existingUser);
+        return;
+      }
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           await signInWithCustomToken(auth, __initial_auth_token);
         } else {
           await signInAnonymously(auth);
         }
+        // onAuthStateChanged fires again automatically with the new user.
       } catch (err) {
         setAppError(`Authentication Failed: ${err.message}`);
         setIsLoading(false);
       }
-    };
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
+    });
     return () => unsubscribe();
   }, []);
 
-  // Register every signed-in user (including anonymous players) the moment
-  // they arrive. This guarantees anonymous users can save their own
-  // predictions AND show up on the leaderboard, even before they set a name.
-  // merge:true means it never clobbers a display name they've already chosen.
   useEffect(() => {
-    if (!user) return;
-    const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid);
-    setDoc(userRef, { uid: user.uid }, { merge: true }).catch(() => {});
-  }, [user]);
-
-  useEffect(() => {
-    if (!user) return;
+    if (!firebaseUser) return;
     let unsubs = [];
     try {
       const matchesRef = collection(db, 'artifacts', appId, 'public', 'data', 'matches');
@@ -708,14 +763,46 @@ export default function App() {
       setIsLoading(false);
     }
     return () => unsubs.forEach(unsub => unsub());
-  }, [user]);
+  }, [firebaseUser]);
 
   const handleSavePrediction = async (matchId, hScore, aScore) => {
-     if (!user) return;
-     const predRef = doc(db, 'artifacts', appId, 'public', 'data', 'predictions', `${user.uid}_${matchId}`);
+     if (!activeAccountId) return;
+     const predRef = doc(db, 'artifacts', appId, 'public', 'data', 'predictions', `${activeAccountId}_${matchId}`);
      await setDoc(predRef, {
-        uid: user.uid, matchId, homeScore: hScore, awayScore: aScore, updatedAt: new Date().toISOString()
+        uid: activeAccountId, matchId, homeScore: hScore, awayScore: aScore, updatedAt: new Date().toISOString()
      }, { merge: true });
+  };
+
+  const handleLogin = async (rawName, pin) => {
+     if (!firebaseUser) return { ok: false, error: 'Still connecting — try again in a moment.' };
+     setLoginBusy(true);
+     try {
+        const displayName = rawName.trim();
+        const accountId = slugify(displayName);
+        const pinHash = await hashPin(pin, accountId);
+        const accountRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', accountId);
+        const existing = await getDoc(accountRef);
+        if (existing.exists()) {
+           if (existing.data().pinHash !== pinHash) {
+              return { ok: false, error: 'That name is already taken and the PIN does not match.' };
+           }
+        } else {
+           await setDoc(accountRef, { uid: accountId, displayName, pinHash, createdAt: new Date().toISOString() });
+        }
+        try { localStorage.setItem(ACCOUNT_STORAGE_KEY, accountId); } catch { /* storage blocked */ }
+        setActiveAccountId(accountId);
+        return { ok: true };
+     } catch (err) {
+        return { ok: false, error: `Login failed: ${err.message}` };
+     } finally {
+        setLoginBusy(false);
+     }
+  };
+
+  const handleLogout = () => {
+     try { localStorage.removeItem(ACCOUNT_STORAGE_KEY); } catch { /* storage blocked */ }
+     setActiveAccountId(null);
+     setActiveTab('matches');
   };
 
   if (appError) {
@@ -730,17 +817,20 @@ export default function App() {
     );
   }
 
-  if (!user || isLoading) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50">
-         <div className="w-16 h-16 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-4"></div>
-         <div className="text-indigo-900 font-bold tracking-widest uppercase text-sm animate-pulse">Warming up the pitch...</div>
-      </div>
-    );
-  }
+  const spinner = (
+    <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50">
+       <div className="w-16 h-16 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-4"></div>
+       <div className="text-indigo-900 font-bold tracking-widest uppercase text-sm animate-pulse">Warming up the pitch...</div>
+    </div>
+  );
 
-  const currentUserDoc = users.find(u => u.uid === user.uid);
-  const displayName = currentUserDoc?.displayName || 'Anonymous';
+  if (!firebaseUser) return spinner;
+  if (!activeAccountId) return <LoginScreen onLogin={handleLogin} busy={loginBusy} />;
+  if (isLoading) return spinner;
+
+  const currentUserDoc = users.find(u => u.uid === activeAccountId);
+  const displayName = currentUserDoc?.displayName || 'Player';
+  const user = { uid: activeAccountId, displayName };
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans selection:bg-indigo-200 text-slate-800">
@@ -769,7 +859,7 @@ export default function App() {
          {activeTab === 'leaderboard' && <LeaderboardTab users={users} predictions={predictions} matches={matches} currentUser={user} />}
          {activeTab === 'rules' && <RulesTab />}
          {activeTab === 'admin' && <AdminPanel matches={matches} users={users} predictions={predictions} globalSettings={globalSettings} />}
-         {activeTab === 'profile' && <ProfileTab user={user} users={users} />}
+         {activeTab === 'profile' && <ProfileTab user={user} onLogout={handleLogout} />}
       </main>
       
       {/* Glassmorphism Bottom Nav */}
