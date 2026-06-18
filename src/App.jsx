@@ -721,8 +721,70 @@ const AllPicksTab = ({ matches, predictions, users, currentUser, disableLocks })
   const nameFor = (uid) => users.find(u => u.uid === uid)?.displayName || 'Player';
   const picksFor = (matchId) => predictions.filter(p => p.matchId === matchId);
 
-  // Total transparency: everyone can see everyone's picks, for every match.
-  const revealed = [...matches].sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
+  // Match the Pitch page ordering exactly: "Live & Upcoming" first (soonest
+  // kickoff first), then "Finished" (most recently finished first). The
+  // `matches` array arrives sorted ascending by start time, so we mirror it.
+  const upcoming = matches.filter(m => m.status !== 'finished');
+  const finished = matches.filter(m => m.status === 'finished').reverse();
+
+  const renderMatchCard = (m) => {
+    const isFinished = m.status === 'finished';
+    const rows = picksFor(m.id).map(p => ({
+      uid: p.uid,
+      name: nameFor(p.uid),
+      homeScore: p.homeScore,
+      awayScore: p.awayScore,
+      points: isFinished ? getPoints(p.homeScore, p.awayScore, m.homeScore, m.awayScore) : null,
+    }));
+    if (isFinished) rows.sort((a, b) => b.points - a.points);
+    else rows.sort((a, b) => a.name.localeCompare(b.name));
+
+    return (
+      <div key={m.id} className="bg-white border border-slate-200 rounded-3xl p-5 mb-6">
+        <div className="flex justify-between items-center mb-4 pb-3 border-b border-slate-100">
+          <span className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
+            <CalendarDays size={14} className="text-slate-400" /> {m.stage}
+          </span>
+          {isFinished ? (
+            <span className="flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full bg-blue-100 text-blue-800"><CheckCircle size={14} /> Full Time</span>
+          ) : (
+            <span className="flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full bg-gray-200 text-gray-600"><Lock size={14} /> Locked</span>
+          )}
+        </div>
+
+        <div className="flex items-center justify-center gap-3 mb-5">
+          <span className="font-extrabold text-slate-800 text-sm sm:text-base text-right flex-1 truncate">{getFlag(m.homeTeam)} {m.homeTeam}</span>
+          <span className={`px-3 py-1 rounded-lg text-sm font-black shrink-0 ${isFinished ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}>
+            {isFinished ? `${m.homeScore} - ${m.awayScore}` : 'vs'}
+          </span>
+          <span className="font-extrabold text-slate-800 text-sm sm:text-base text-left flex-1 truncate">{m.awayTeam} {getFlag(m.awayTeam)}</span>
+        </div>
+
+        {rows.length === 0 ? (
+          <p className="text-center text-sm text-slate-400 italic py-3">No predictions for this match.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {rows.map(r => (
+              <div key={r.uid} className={`flex items-center justify-between rounded-xl px-3 py-2 ${r.uid === currentUser.uid ? 'bg-indigo-50' : 'bg-slate-50'}`}>
+                <span className="font-bold text-slate-700 text-sm flex items-center gap-2 truncate min-w-0">
+                  <span className="truncate">{r.name}</span>
+                  {r.uid === currentUser.uid && <span className="px-1.5 py-0.5 rounded text-[9px] uppercase font-bold bg-indigo-100 text-indigo-700 tracking-wider shrink-0">You</span>}
+                </span>
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className="font-black text-slate-800 text-sm tabular-nums">{r.homeScore}–{r.awayScore}</span>
+                  {isFinished && (
+                    <span className={`text-xs font-bold px-2.5 py-1 rounded-lg ${r.points > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-500'}`}>
+                      {r.points > 0 ? `+${r.points}` : '0'}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="pb-8 animate-in fade-in duration-500">
@@ -731,70 +793,29 @@ const AllPicksTab = ({ matches, predictions, users, currentUser, disableLocks })
         <p className="text-slate-500 text-sm font-medium">Every player's prediction is visible here, for every match.</p>
       </div>
 
-      {revealed.length === 0 && (
+      {matches.length === 0 && (
         <div className="bg-white rounded-3xl border border-slate-200 p-10 text-center text-slate-500 font-medium mb-8">
-          No predictions have been made yet.
+          No matches scheduled yet.
         </div>
       )}
 
-      {revealed.map(m => {
-        const isFinished = m.status === 'finished';
-        const rows = picksFor(m.id).map(p => ({
-          uid: p.uid,
-          name: nameFor(p.uid),
-          homeScore: p.homeScore,
-          awayScore: p.awayScore,
-          points: isFinished ? getPoints(p.homeScore, p.awayScore, m.homeScore, m.awayScore) : null,
-        }));
-        if (isFinished) rows.sort((a, b) => b.points - a.points);
-        else rows.sort((a, b) => a.name.localeCompare(b.name));
+      {upcoming.length > 0 && (
+        <div className="mb-8">
+          <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-indigo-500"></span> Live & Upcoming
+          </h3>
+          {upcoming.map(renderMatchCard)}
+        </div>
+      )}
 
-        return (
-          <div key={m.id} className="bg-white border border-slate-200 rounded-3xl p-5 mb-6">
-            <div className="flex justify-between items-center mb-4 pb-3 border-b border-slate-100">
-              <span className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
-                <CalendarDays size={14} className="text-slate-400" /> {m.stage}
-              </span>
-              {isFinished ? (
-                <span className="flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full bg-blue-100 text-blue-800"><CheckCircle size={14} /> Full Time</span>
-              ) : (
-                <span className="flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full bg-gray-200 text-gray-600"><Lock size={14} /> Locked</span>
-              )}
-            </div>
-
-            <div className="flex items-center justify-center gap-3 mb-5">
-              <span className="font-extrabold text-slate-800 text-sm sm:text-base text-right flex-1 truncate">{getFlag(m.homeTeam)} {m.homeTeam}</span>
-              <span className={`px-3 py-1 rounded-lg text-sm font-black shrink-0 ${isFinished ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}>
-                {isFinished ? `${m.homeScore} - ${m.awayScore}` : 'vs'}
-              </span>
-              <span className="font-extrabold text-slate-800 text-sm sm:text-base text-left flex-1 truncate">{m.awayTeam} {getFlag(m.awayTeam)}</span>
-            </div>
-
-            {rows.length === 0 ? (
-              <p className="text-center text-sm text-slate-400 italic py-3">No predictions for this match.</p>
-            ) : (
-              <div className="space-y-1.5">
-                {rows.map(r => (
-                  <div key={r.uid} className={`flex items-center justify-between rounded-xl px-3 py-2 ${r.uid === currentUser.uid ? 'bg-indigo-50' : 'bg-slate-50'}`}>
-                    <span className="font-bold text-slate-700 text-sm flex items-center gap-2 truncate min-w-0">
-                      <span className="truncate">{r.name}</span>
-                      {r.uid === currentUser.uid && <span className="px-1.5 py-0.5 rounded text-[9px] uppercase font-bold bg-indigo-100 text-indigo-700 tracking-wider shrink-0">You</span>}
-                    </span>
-                    <div className="flex items-center gap-3 shrink-0">
-                      <span className="font-black text-slate-800 text-sm tabular-nums">{r.homeScore}–{r.awayScore}</span>
-                      {isFinished && (
-                        <span className={`text-xs font-bold px-2.5 py-1 rounded-lg ${r.points > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-500'}`}>
-                          {r.points > 0 ? `+${r.points}` : '0'}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })}
+      {finished.length > 0 && (
+        <div>
+          <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2 mt-10">
+            <span className="w-2 h-2 rounded-full bg-slate-300"></span> Finished Matches
+          </h3>
+          {finished.map(renderMatchCard)}
+        </div>
+      )}
     </div>
   );
 };
