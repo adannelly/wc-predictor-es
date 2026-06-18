@@ -153,6 +153,14 @@ function getPoints(predHome, predAway, actualHome, actualAway) {
   return points;
 }
 
+// Convert a stored ISO/UTC time into the "YYYY-MM-DDTHH:mm" local string that
+// a <input type="datetime-local"> expects, so admins edit in their own time zone.
+function toLocalInput(iso) {
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 // --- Components ---
 
 const MatchCard = ({ match, prediction, onSavePrediction, currentUserId, disableLocks }) => {
@@ -522,6 +530,12 @@ const AdminPanel = ({ matches, users, predictions, globalSettings }) => {
     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'matches', matchId), { homeScore: hScore, awayScore: aScore, status });
   }
 
+  // Updates ONLY the kickoff time. The match keeps its document id, so every
+  // prediction attached to it stays linked — nothing is erased.
+  const handleTimeUpdate = async (matchId, iso) => {
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'matches', matchId), { startTime: iso });
+  }
+
   const handleAddMatch = async (e) => {
     e.preventDefault();
     if (!newHome || !newAway || !newTime) return;
@@ -651,7 +665,7 @@ const AdminPanel = ({ matches, users, predictions, globalSettings }) => {
               </span>
             </div>
             
-            <AdminMatchRow match={m} onUpdate={handleScoreUpdate} />
+            <AdminMatchRow match={m} onUpdate={handleScoreUpdate} onUpdateTime={handleTimeUpdate} />
           </div>
         ))}
       </div>
@@ -659,20 +673,39 @@ const AdminPanel = ({ matches, users, predictions, globalSettings }) => {
   )
 }
 
-const AdminMatchRow = ({ match, onUpdate }) => {
+const AdminMatchRow = ({ match, onUpdate, onUpdateTime }) => {
   const [h, setH] = useState(match.homeScore ?? '');
   const [a, setA] = useState(match.awayScore ?? '');
-  
+  const [t, setT] = useState(toLocalInput(match.startTime));
+  const [savedTime, setSavedTime] = useState(false);
+
+  const saveTime = async () => {
+    if (!t) return;
+    await onUpdateTime(match.id, new Date(t).toISOString());
+    setSavedTime(true);
+    setTimeout(() => setSavedTime(false), 2000);
+  };
+
   return (
-    <div className="flex gap-2 items-center w-full sm:w-auto justify-between sm:justify-end bg-slate-50 sm:bg-transparent p-3 sm:p-0 rounded-xl">
-      <div className="flex items-center gap-1">
-        <input type="number" value={h} onChange={e=>setH(e.target.value)} className="w-12 h-10 border border-slate-300 rounded-lg text-center font-bold focus:border-indigo-500 outline-none" placeholder="-" />
-        <span className="font-bold text-slate-400 px-1">:</span>
-        <input type="number" value={a} onChange={e=>setA(e.target.value)} className="w-12 h-10 border border-slate-300 rounded-lg text-center font-bold focus:border-indigo-500 outline-none" placeholder="-" />
+    <div className="flex flex-col gap-2 w-full sm:w-auto bg-slate-50 sm:bg-transparent p-3 sm:p-0 rounded-xl">
+      {/* Score row */}
+      <div className="flex gap-2 items-center justify-between sm:justify-end">
+        <div className="flex items-center gap-1">
+          <input type="number" value={h} onChange={e=>setH(e.target.value)} className="w-12 h-10 border border-slate-300 rounded-lg text-center font-bold focus:border-indigo-500 outline-none" placeholder="-" />
+          <span className="font-bold text-slate-400 px-1">:</span>
+          <input type="number" value={a} onChange={e=>setA(e.target.value)} className="w-12 h-10 border border-slate-300 rounded-lg text-center font-bold focus:border-indigo-500 outline-none" placeholder="-" />
+        </div>
+        <div className="flex gap-2 ml-4">
+           <button onClick={() => onUpdate(match.id, h, a, 'finished')} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-2.5 rounded-lg shadow-sm transition-colors">Set Final</button>
+           <button onClick={() => onUpdate(match.id, null, null, 'scheduled')} className="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold px-3 py-2.5 rounded-lg transition-colors">Reset</button>
+        </div>
       </div>
-      <div className="flex gap-2 ml-4">
-         <button onClick={() => onUpdate(match.id, h, a, 'finished')} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-2.5 rounded-lg shadow-sm transition-colors">Set Final</button>
-         <button onClick={() => onUpdate(match.id, null, null, 'scheduled')} className="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold px-3 py-2.5 rounded-lg transition-colors">Reset</button>
+      {/* Kickoff time row */}
+      <div className="flex gap-2 items-center justify-between sm:justify-end">
+        <input type="datetime-local" value={t} onChange={e=>setT(e.target.value)} className="h-10 border border-slate-300 rounded-lg px-2 text-xs font-medium focus:border-indigo-500 outline-none bg-white" />
+        <button onClick={saveTime} className={`text-xs font-bold px-3 py-2.5 rounded-lg transition-colors ${savedTime ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-800 hover:bg-slate-900 text-white'}`}>
+          {savedTime ? 'Saved ✓' : 'Save Time'}
+        </button>
       </div>
     </div>
   )
