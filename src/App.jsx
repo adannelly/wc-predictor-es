@@ -331,11 +331,12 @@ const MatchesTab = ({ matches, predictions, user, onSavePrediction, disableLocks
 const LeaderboardTab = ({ users, predictions, matches, currentUser }) => {
   const leaderboard = useMemo(() => {
     const scores = {};
-    users.forEach(u => {
+    users.filter(u => u.uid !== ADMIN_ACCOUNT_ID).forEach(u => {
       scores[u.uid] = { uid: u.uid, displayName: u.displayName || 'Anonymous', points: 0, exactMatches: 0, correctResults: 0 };
     });
 
     predictions.forEach(pred => {
+      if (pred.uid === ADMIN_ACCOUNT_ID) return; // the admin doesn't compete
       const match = matches.find(m => m.id === pred.matchId);
       if (!match || match.status !== 'finished') return;
 
@@ -719,7 +720,7 @@ const AdminMatchRow = ({ match, onUpdate, onUpdateTime }) => {
 // the viewer sees their own pick. This page never writes any data.
 const AllPicksTab = ({ matches, predictions, users, currentUser, disableLocks }) => {
   const nameFor = (uid) => users.find(u => u.uid === uid)?.displayName || 'Player';
-  const picksFor = (matchId) => predictions.filter(p => p.matchId === matchId);
+  const picksFor = (matchId) => predictions.filter(p => p.matchId === matchId && p.uid !== ADMIN_ACCOUNT_ID);
 
   // Match the Pitch page ordering exactly: "Live & Upcoming" first (soonest
   // kickoff first), then "Finished" (most recently finished first). The
