@@ -23,10 +23,220 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
+// --- Edition (language + user separation) ---
+// Both the English and Spanish sites share ONE Firebase backend (same matches,
+// scores and settings). What differs per deployment is this single value, read
+// from the build env: set VITE_EDITION=es in the Spanish deployment; English
+// leaves it unset. The edition drives the language AND keeps users separate.
+const EDITION = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_EDITION === 'es') ? 'es' : 'en';
+
+// Spanish accounts are namespaced with an "es_" prefix so an English "maria"
+// and a Spanish "maria" never collide. English keeps no prefix, so all the
+// accounts and predictions you already have are untouched.
+const EDITION_PREFIX = EDITION === 'es' ? 'es_' : '';
+
+// Which edition a stored user/prediction belongs to. Falls back to the id
+// prefix, then to 'en' — so legacy English records (no edition field) read 'en'.
+const editionOfUid = (uid) => (typeof uid === 'string' && uid.startsWith('es_')) ? 'es' : 'en';
+const docEdition = (d) => (d && d.edition) || editionOfUid(d && d.uid);
+
+// --- Language strings ---
+const STRINGS = {
+  en: {
+    appTitleSuffix: '26',
+    nav: { predict: 'Predict', standings: 'Standings', picks: 'Picks', rules: 'Rules', profile: 'Profile', admin: 'Admin' },
+    spinner: 'Warming up the pitch...',
+    configError: 'Configuration Error',
+    authFailed: (m) => `Authentication Failed: ${m}`,
+    dbDenied: (m) => `Database Access Denied: ${m}`,
+    setupError: (m) => `Unexpected setup error: ${m}`,
+    stillConnecting: 'Still connecting — try again in a moment.',
+    nameTaken: 'That name is already taken and the PIN does not match.',
+    loginFailed: (m) => `Login failed: ${m}`,
+    errEnterName: 'Please enter a name using letters or numbers.',
+    errPin: 'Your PIN must be exactly 4 digits.',
+    pitchTitle: 'The Pitch',
+    pitchSubtitle: 'Predict final scores before match kick-off to earn points.',
+    liveUpcoming: 'Live & Upcoming',
+    finishedMatches: 'Finished Matches',
+    fullTime: 'Full Time',
+    locked: 'Locked',
+    saving: 'Saving...',
+    savePrediction: 'Save Prediction',
+    actualScore: 'Actual Score:',
+    ptsEarned: (n) => `+${n} Pts Earned`,
+    zeroPts: '0 Pts Earned',
+    noPrediction: 'No prediction',
+    standingsTitle: 'Global Standings',
+    standingsSubtitle: 'Rankings update instantly as matches conclude.',
+    noPoints: 'No points awarded yet.',
+    you: 'You',
+    exactScores: (n) => `${n} Exact Score${n !== 1 ? 's' : ''}`,
+    correctResults: (n) => `${n} Correct Result${n !== 1 ? 's' : ''}`,
+    pts: 'PTS',
+    profileNote: 'Signed in. Use the same name and PIN to pick up on any phone or computer.',
+    profileInfo: 'Your predictions and points are tied to this name. Logging in elsewhere with the same name and PIN picks up right where you left off.',
+    logOut: 'Log Out',
+    scoringRules: 'Scoring Rules',
+    correctResultTitle: 'Correct Result',
+    correctResultBody: (p) => `Earn ${p} point if you correctly predict the overall outcome (Win, Draw, or Loss) but miss the exact score.`,
+    exactBonusTitle: 'Exact Score Bonus',
+    exactBonusBodyPre: (b) => `Earn ${b} additional points (`,
+    exactBonusBodyTotal: (t) => `${t} points total`,
+    exactBonusBodyPost: ') if you nail the exact final score.',
+    ruleLock: "Predictions lock automatically at the match's scheduled kick-off time.",
+    ruleBoard: 'The leaderboard updates instantly as soon as a final score is recorded.',
+    adminTitle: 'Admin Simulator',
+    adminSubtitle: 'Input match results & manage data.',
+    reEnableLocks: 'Re-enable Time Locks',
+    unlockAll: 'Unlock All Matches',
+    scheduleTools: 'Schedule Tools',
+    scheduleToolsBody: 'Load the complete group stage — all 12 groups, 72 matches, set to "scheduled" so everyone can predict them. This replaces the current schedule.',
+    seedConfirm: 'This wipes the current matches and loads a fresh group stage. Continue?',
+    loading: 'Loading...',
+    yesLoad: 'Yes, load it',
+    cancel: 'Cancel',
+    loadGroupStage: 'Load Full Group Stage',
+    editEntries: 'Edit Player Entries',
+    selectUser: 'Select User',
+    chooseUser: '-- Choose User --',
+    selectMatch: 'Select Match',
+    chooseMatch: '-- Choose Match --',
+    modifyPrediction: 'Modify Prediction:',
+    forceSave: 'Force Save',
+    createMatch: 'Create Match',
+    homeTeam: 'Home Team',
+    awayTeam: 'Away Team',
+    stageLabel: 'Stage',
+    startTimeLocal: 'Start Time (Local)',
+    addingMatch: 'Adding Match...',
+    addMatch: 'Add Match to Schedule',
+    matchDatabase: 'Match Database',
+    deleteQ: 'Delete?',
+    yes: 'Yes',
+    no: 'No',
+    setFinal: 'Set Final',
+    reset: 'Reset',
+    savedTime: 'Saved ✓',
+    saveTime: 'Save Time',
+    egHome: 'e.g. Brazil',
+    egAway: 'e.g. France',
+    egStage: 'e.g. Group G',
+    picksTitle: "Everyone's Picks",
+    picksSubtitle: "Every player's prediction is visible here, for every match.",
+    noMatches: 'No matches scheduled yet.',
+    noPredForMatch: 'No predictions for this match.',
+    loginSubtitle: 'Enter your name and a 4-digit PIN to start. Use the same details to log back in from any device.',
+    yourName: 'Your Name',
+    pinLabel: '4-Digit PIN',
+    connecting: 'Connecting...',
+    enterPool: 'Enter Pool',
+    loginFooterNew: "New name? You'll be registered automatically.",
+    loginFooterReturn: 'Returning? Enter the same name and PIN.',
+    egName: 'e.g. Adam',
+  },
+  es: {
+    appTitleSuffix: '26',
+    nav: { predict: 'Predecir', standings: 'Posiciones', picks: 'Pronósticos', rules: 'Reglas', profile: 'Perfil', admin: 'Admin' },
+    spinner: 'Calentando el campo...',
+    configError: 'Error de configuración',
+    authFailed: (m) => `Error de autenticación: ${m}`,
+    dbDenied: (m) => `Acceso a la base de datos denegado: ${m}`,
+    setupError: (m) => `Error de configuración inesperado: ${m}`,
+    stillConnecting: 'Aún conectando — inténtalo de nuevo en un momento.',
+    nameTaken: 'Ese nombre ya está en uso y el PIN no coincide.',
+    loginFailed: (m) => `Error al iniciar sesión: ${m}`,
+    errEnterName: 'Introduce un nombre con letras o números.',
+    errPin: 'El PIN debe tener exactamente 4 dígitos.',
+    pitchTitle: 'El Campo',
+    pitchSubtitle: 'Pronostica los marcadores finales antes del inicio del partido para ganar puntos.',
+    liveUpcoming: 'En vivo y próximos',
+    finishedMatches: 'Partidos finalizados',
+    fullTime: 'Finalizado',
+    locked: 'Bloqueado',
+    saving: 'Guardando...',
+    savePrediction: 'Guardar pronóstico',
+    actualScore: 'Marcador real:',
+    ptsEarned: (n) => `+${n} pts ganados`,
+    zeroPts: '0 pts ganados',
+    noPrediction: 'Sin pronóstico',
+    standingsTitle: 'Clasificación general',
+    standingsSubtitle: 'La clasificación se actualiza al instante cuando terminan los partidos.',
+    noPoints: 'Aún no se han otorgado puntos.',
+    you: 'Tú',
+    exactScores: (n) => `${n} marcador${n !== 1 ? 'es' : ''} exacto${n !== 1 ? 's' : ''}`,
+    correctResults: (n) => `${n} resultado${n !== 1 ? 's' : ''} correcto${n !== 1 ? 's' : ''}`,
+    pts: 'PTS',
+    profileNote: 'Sesión iniciada. Usa el mismo nombre y PIN para continuar en cualquier teléfono o computadora.',
+    profileInfo: 'Tus pronósticos y puntos están vinculados a este nombre. Iniciar sesión en otro lugar con el mismo nombre y PIN retoma justo donde lo dejaste.',
+    logOut: 'Cerrar sesión',
+    scoringRules: 'Reglas de puntuación',
+    correctResultTitle: 'Resultado correcto',
+    correctResultBody: (p) => `Gana ${p} punto si aciertas el resultado general (victoria, empate o derrota) pero fallas el marcador exacto.`,
+    exactBonusTitle: 'Bono por marcador exacto',
+    exactBonusBodyPre: (b) => `Gana ${b} puntos adicionales (`,
+    exactBonusBodyTotal: (t) => `${t} puntos en total`,
+    exactBonusBodyPost: ') si aciertas el marcador final exacto.',
+    ruleLock: 'Los pronósticos se bloquean automáticamente a la hora de inicio del partido.',
+    ruleBoard: 'La clasificación se actualiza al instante en cuanto se registra un marcador final.',
+    adminTitle: 'Panel de administración',
+    adminSubtitle: 'Introduce resultados y gestiona los datos.',
+    reEnableLocks: 'Reactivar bloqueos',
+    unlockAll: 'Desbloquear todos',
+    scheduleTools: 'Herramientas de calendario',
+    scheduleToolsBody: 'Carga la fase de grupos completa — los 12 grupos, 72 partidos, en estado «programado» para que todos puedan pronosticar. Esto reemplaza el calendario actual.',
+    seedConfirm: 'Esto borra los partidos actuales y carga una fase de grupos nueva. ¿Continuar?',
+    loading: 'Cargando...',
+    yesLoad: 'Sí, cargar',
+    cancel: 'Cancelar',
+    loadGroupStage: 'Cargar fase de grupos completa',
+    editEntries: 'Editar pronósticos de jugadores',
+    selectUser: 'Seleccionar jugador',
+    chooseUser: '-- Elegir jugador --',
+    selectMatch: 'Seleccionar partido',
+    chooseMatch: '-- Elegir partido --',
+    modifyPrediction: 'Modificar pronóstico:',
+    forceSave: 'Guardar',
+    createMatch: 'Crear partido',
+    homeTeam: 'Equipo local',
+    awayTeam: 'Equipo visitante',
+    stageLabel: 'Fase',
+    startTimeLocal: 'Hora de inicio (local)',
+    addingMatch: 'Añadiendo partido...',
+    addMatch: 'Añadir partido al calendario',
+    matchDatabase: 'Base de datos de partidos',
+    deleteQ: '¿Eliminar?',
+    yes: 'Sí',
+    no: 'No',
+    setFinal: 'Marcar final',
+    reset: 'Reiniciar',
+    savedTime: 'Guardado ✓',
+    saveTime: 'Guardar hora',
+    egHome: 'Ej. Brasil',
+    egAway: 'Ej. Francia',
+    egStage: 'Ej. Grupo G',
+    picksTitle: 'Pronósticos de todos',
+    picksSubtitle: 'Aquí se ve el pronóstico de cada jugador, para cada partido.',
+    noMatches: 'Aún no hay partidos programados.',
+    noPredForMatch: 'Sin pronósticos para este partido.',
+    loginSubtitle: 'Introduce tu nombre y un PIN de 4 dígitos para empezar. Usa los mismos datos para volver a entrar desde cualquier dispositivo.',
+    yourName: 'Tu nombre',
+    pinLabel: 'PIN de 4 dígitos',
+    connecting: 'Conectando...',
+    enterPool: 'Entrar a la quiniela',
+    loginFooterNew: '¿Nombre nuevo? Te registraremos automáticamente.',
+    loginFooterReturn: '¿Vuelves? Introduce el mismo nombre y PIN.',
+    egName: 'Ej. Adam',
+  },
+};
+
+// Active language for this build.
+const T = STRINGS[EDITION];
+
 // --- Identity helpers (name + PIN accounts) ---
 // A player's identity is their name, not the browser. The name becomes a
 // stable account id so the same person can log in from any device.
-const ACCOUNT_STORAGE_KEY = 'wc_account_id';
+const ACCOUNT_STORAGE_KEY = `wc_account_id_${EDITION}`;
 
 // Turn a display name into a Firestore-safe id, e.g. "Adam D" -> "adam_d".
 const slugify = (name) =>
@@ -126,6 +336,9 @@ const INITIAL_MATCHES = buildGroupStage();
 // The account allowed to see the Admin tab. Whoever registers this name owns
 // it (protected by their PIN), so claim it before sharing the app.
 const ADMIN_ACCOUNT_ID = 'admin';
+// The admin account for THIS edition (e.g. "admin" in English, "es_admin" in
+// Spanish). Each edition has its own admin login; both manage the shared games.
+const EDITION_ADMIN_ID = EDITION_PREFIX + ADMIN_ACCOUNT_ID;
 
 // --- Core Game Logic ---
 function getPoints(predHome, predAway, actualHome, actualAway) {
@@ -205,9 +418,9 @@ const MatchCard = ({ match, prediction, onSavePrediction, currentUserId, disable
         </span>
         <div className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full ${badgeClass}`}>
           {isFinished ? (
-            <><CheckCircle size={14} /> Full Time</>
+            <><CheckCircle size={14} /> {T.fullTime}</>
           ) : isLocked ? (
-            <><Lock size={14} /> Locked</>
+            <><Lock size={14} /> {T.locked}</>
           ) : (
             <><Clock size={14} /> {startTime.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</>
           )}
@@ -261,7 +474,7 @@ const MatchCard = ({ match, prediction, onSavePrediction, currentUserId, disable
            disabled={isSaving} 
            className="mt-6 w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 rounded-xl transition-all flex justify-center items-center gap-2 shadow-lg shadow-indigo-600/30 active:scale-[0.98]"
          >
-           {isSaving ? <span className="animate-pulse">Saving...</span> : <>Save Prediction <ChevronRight size={18} /></>}
+           {isSaving ? <span className="animate-pulse">{T.saving}</span> : <>{T.savePrediction} <ChevronRight size={18} /></>}
          </button>
       )}
 
@@ -269,7 +482,7 @@ const MatchCard = ({ match, prediction, onSavePrediction, currentUserId, disable
       {isFinished && (
         <div className="mt-5 pt-4 border-t border-slate-100 flex flex-col sm:flex-row justify-between items-center gap-3">
           <div className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
-            Actual Score: 
+            {T.actualScore}
             <span className="px-3 py-1 bg-slate-800 text-white rounded-lg text-sm tracking-normal">
               {match.homeScore} - {match.awayScore}
             </span>
@@ -278,10 +491,10 @@ const MatchCard = ({ match, prediction, onSavePrediction, currentUserId, disable
             {prediction ? (
               <span className={`flex items-center gap-1.5 text-sm font-bold px-4 py-1.5 rounded-xl shadow-sm ${earnedPoints > 0 ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-slate-100 text-slate-600 border border-slate-200'}`}>
                 {earnedPoints === POINTS_EXACT_TOTAL && <Trophy size={16} className="text-yellow-600" />}
-                {earnedPoints > 0 ? `+${earnedPoints} Pts Earned` : '0 Pts Earned'}
+                {earnedPoints > 0 ? T.ptsEarned(earnedPoints) : T.zeroPts}
               </span>
             ) : (
-              <span className="text-sm font-medium text-slate-400 italic px-3 py-1 bg-slate-50 rounded-lg">No prediction</span>
+              <span className="text-sm font-medium text-slate-400 italic px-3 py-1 bg-slate-50 rounded-lg">{T.noPrediction}</span>
             )}
           </div>
         </div>
@@ -297,14 +510,14 @@ const MatchesTab = ({ matches, predictions, user, onSavePrediction, disableLocks
   return (
     <div className="pb-8 animate-in fade-in duration-500">
       <div className="mb-8 text-center sm:text-left">
-        <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight mb-2">The Pitch</h2>
-        <p className="text-slate-500 text-sm font-medium">Predict final scores before match kick-off to earn points.</p>
+        <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight mb-2">{T.pitchTitle}</h2>
+        <p className="text-slate-500 text-sm font-medium">{T.pitchSubtitle}</p>
       </div>
 
       {upcoming.length > 0 && (
         <div className="mb-8">
           <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-indigo-500"></span> Live & Upcoming
+            <span className="w-2 h-2 rounded-full bg-indigo-500"></span> {T.liveUpcoming}
           </h3>
           {upcoming.map(m => {
             const userPred = predictions.find(p => p.matchId === m.id && p.uid === user.uid);
@@ -316,7 +529,7 @@ const MatchesTab = ({ matches, predictions, user, onSavePrediction, disableLocks
       {finished.length > 0 && (
         <div>
            <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2 mt-10">
-            <span className="w-2 h-2 rounded-full bg-slate-300"></span> Finished Matches
+            <span className="w-2 h-2 rounded-full bg-slate-300"></span> {T.finishedMatches}
           </h3>
           {finished.map(m => {
             const userPred = predictions.find(p => p.matchId === m.id && p.uid === user.uid);
@@ -331,12 +544,12 @@ const MatchesTab = ({ matches, predictions, user, onSavePrediction, disableLocks
 const LeaderboardTab = ({ users, predictions, matches, currentUser }) => {
   const leaderboard = useMemo(() => {
     const scores = {};
-    users.filter(u => u.uid !== ADMIN_ACCOUNT_ID).forEach(u => {
+    users.filter(u => docEdition(u) === EDITION && u.uid !== EDITION_ADMIN_ID).forEach(u => {
       scores[u.uid] = { uid: u.uid, displayName: u.displayName || 'Anonymous', points: 0, exactMatches: 0, correctResults: 0 };
     });
 
     predictions.forEach(pred => {
-      if (pred.uid === ADMIN_ACCOUNT_ID) return; // the admin doesn't compete
+      if (docEdition(pred) !== EDITION || pred.uid === EDITION_ADMIN_ID) return; // only this edition; admin doesn't compete
       const match = matches.find(m => m.id === pred.matchId);
       if (!match || match.status !== 'finished') return;
 
@@ -366,14 +579,14 @@ const LeaderboardTab = ({ users, predictions, matches, currentUser }) => {
   return (
     <div className="pb-8 animate-in fade-in duration-500">
        <div className="mb-8 text-center sm:text-left">
-        <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight mb-2">Global Standings</h2>
-        <p className="text-slate-500 text-sm font-medium">Rankings update instantly as matches conclude.</p>
+        <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight mb-2">{T.standingsTitle}</h2>
+        <p className="text-slate-500 text-sm font-medium">{T.standingsSubtitle}</p>
       </div>
       
       <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
         <div className="p-0">
             {leaderboard.length === 0 && (
-              <div className="p-10 text-center text-slate-500 font-medium">No points awarded yet.</div>
+              <div className="p-10 text-center text-slate-500 font-medium">{T.noPoints}</div>
             )}
             
             {leaderboard.map((u, i) => (
@@ -388,17 +601,17 @@ const LeaderboardTab = ({ users, predictions, matches, currentUser }) => {
                 <div className="ml-4 flex-1">
                   <div className="font-bold text-slate-800 text-base flex items-center gap-2">
                     {u.displayName}
-                    {u.uid === currentUser.uid && <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold bg-indigo-100 text-indigo-700 tracking-wider">You</span>}
+                    {u.uid === currentUser.uid && <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold bg-indigo-100 text-indigo-700 tracking-wider">{T.you}</span>}
                   </div>
                   <div className="text-xs text-slate-500 mt-0.5 font-medium hidden sm:block">
-                     {u.exactMatches} Exact Score{u.exactMatches !== 1 ? 's' : ''} • {u.correctResults} Correct Result{u.correctResults !== 1 ? 's' : ''}
+                     {T.exactScores(u.exactMatches)} • {T.correctResults(u.correctResults)}
                   </div>
                 </div>
 
                 {/* Points */}
                 <div className="text-right ml-4">
                    <div className="font-black text-indigo-600 text-xl">{u.points}</div>
-                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PTS</div>
+                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{T.pts}</div>
                 </div>
               </div>
             ))}
@@ -418,15 +631,15 @@ const ProfileTab = ({ user, onLogout }) => (
         </div>
 
         <h2 className="text-2xl font-extrabold text-slate-800 mb-1 relative z-10">{user.displayName}</h2>
-        <p className="text-slate-500 text-sm mb-8 font-medium relative z-10">Signed in. Use the same name and PIN to pick up on any phone or computer.</p>
+        <p className="text-slate-500 text-sm mb-8 font-medium relative z-10">{T.profileNote}</p>
 
         <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 mb-8 text-left flex items-center gap-3">
            <div className="p-2 bg-indigo-100 rounded-lg text-indigo-600 shrink-0"><Info size={18} /></div>
-           <p className="text-xs text-slate-600 font-medium leading-relaxed">Your predictions and points are tied to this name. Logging in elsewhere with the same name and PIN picks up right where you left off.</p>
+           <p className="text-xs text-slate-600 font-medium leading-relaxed">{T.profileInfo}</p>
         </div>
 
         <button onClick={onLogout} className="bg-slate-900 hover:bg-black text-white px-4 py-4 rounded-2xl w-full font-bold transition-all shadow-lg hover:shadow-xl active:scale-[0.98] flex items-center justify-center gap-2">
-           <LogOut size={18} /> Log Out
+           <LogOut size={18} /> {T.logOut}
         </button>
      </div>
    </div>
@@ -437,34 +650,34 @@ const RulesTab = () => (
     <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200">
       <h2 className="text-2xl font-extrabold text-slate-800 mb-8 flex items-center gap-3">
         <div className="p-2 bg-indigo-100 rounded-lg text-indigo-600"><Info size={24} /></div>
-        Scoring Rules
+        {T.scoringRules}
       </h2>
       
       <div className="space-y-8">
         <div className="flex items-start gap-5">
           <div className="bg-indigo-50 text-indigo-600 font-black px-4 py-2 rounded-xl text-xl border border-indigo-100 shadow-sm">{POINTS_CORRECT_RESULT}</div>
           <div>
-            <h3 className="font-bold text-slate-900 text-lg">Correct Result</h3>
-            <p className="text-sm text-slate-500 mt-1 font-medium leading-relaxed">Earn {POINTS_CORRECT_RESULT} point if you correctly predict the overall outcome (Win, Draw, or Loss) but miss the exact score.</p>
+            <h3 className="font-bold text-slate-900 text-lg">{T.correctResultTitle}</h3>
+            <p className="text-sm text-slate-500 mt-1 font-medium leading-relaxed">{T.correctResultBody(POINTS_CORRECT_RESULT)}</p>
           </div>
         </div>
 
         <div className="flex items-start gap-5">
           <div className="bg-yellow-50 text-yellow-600 font-black px-4 py-2 rounded-xl text-xl border border-yellow-200 shadow-sm">+{POINTS_EXACT_BONUS}</div>
           <div>
-            <h3 className="font-bold text-slate-900 text-lg">Exact Score Bonus</h3>
-            <p className="text-sm text-slate-500 mt-1 font-medium leading-relaxed">Earn {POINTS_EXACT_BONUS} additional points (<span className="font-bold text-slate-700">{POINTS_EXACT_TOTAL} points total</span>) if you nail the exact final score.</p>
+            <h3 className="font-bold text-slate-900 text-lg">{T.exactBonusTitle}</h3>
+            <p className="text-sm text-slate-500 mt-1 font-medium leading-relaxed">{T.exactBonusBodyPre(POINTS_EXACT_BONUS)}<span className="font-bold text-slate-700">{T.exactBonusBodyTotal(POINTS_EXACT_TOTAL)}</span>{T.exactBonusBodyPost}</p>
           </div>
         </div>
 
         <div className="border-t border-slate-100 pt-6 mt-4 space-y-4">
           <div className="flex items-start gap-3 bg-slate-50 p-4 rounded-2xl">
              <Lock size={20} className="text-slate-400 shrink-0 mt-0.5" />
-             <p className="text-sm text-slate-600 font-medium">Predictions lock automatically at the match's scheduled kick-off time.</p>
+             <p className="text-sm text-slate-600 font-medium">{T.ruleLock}</p>
           </div>
           <div className="flex items-start gap-3 bg-slate-50 p-4 rounded-2xl">
              <Trophy size={20} className="text-slate-400 shrink-0 mt-0.5" />
-             <p className="text-sm text-slate-600 font-medium">The leaderboard updates instantly as soon as a final score is recorded.</p>
+             <p className="text-sm text-slate-600 font-medium">{T.ruleBoard}</p>
           </div>
         </div>
       </div>
@@ -523,7 +736,7 @@ const AdminPanel = ({ matches, users, predictions, globalSettings }) => {
     if (!selectedUser || !selectedMatch) return;
     setIsSavingEdit(true);
     const predRef = doc(db, 'artifacts', appId, 'public', 'data', 'predictions', `${selectedUser}_${selectedMatch}`);
-    await setDoc(predRef, { uid: selectedUser, matchId: selectedMatch, homeScore: editHome, awayScore: editAway, updatedAt: new Date().toISOString() }, { merge: true });
+    await setDoc(predRef, { uid: selectedUser, matchId: selectedMatch, homeScore: editHome, awayScore: editAway, edition: editionOfUid(selectedUser), updatedAt: new Date().toISOString() }, { merge: true });
     setIsSavingEdit(false);
   };
 
@@ -558,103 +771,103 @@ const AdminPanel = ({ matches, users, predictions, globalSettings }) => {
     <div className="pb-8 animate-in fade-in duration-500">
       <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-900 p-6 rounded-3xl text-white shadow-lg">
         <div>
-          <h2 className="text-xl font-bold flex items-center gap-2"><ShieldAlert size={20} className="text-red-400" /> Admin Simulator</h2>
-          <p className="text-slate-400 text-xs mt-1 font-medium">Input match results & manage data.</p>
+          <h2 className="text-xl font-bold flex items-center gap-2"><ShieldAlert size={20} className="text-red-400" /> {T.adminTitle}</h2>
+          <p className="text-slate-400 text-xs mt-1 font-medium">{T.adminSubtitle}</p>
         </div>
         <button
            onClick={handleToggleLocks}
            className={`px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all shadow-sm flex items-center gap-2 ${globalSettings?.disableLocks ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30' : 'bg-emerald-500 text-white hover:bg-emerald-600'}`}
         >
-           {globalSettings?.disableLocks ? <><Lock size={16}/> Re-enable Time Locks</> : <><Lock size={16} className="opacity-50"/> Unlock All Matches</>}
+           {globalSettings?.disableLocks ? <><Lock size={16}/> {T.reEnableLocks}</> : <><Lock size={16} className="opacity-50"/> {T.unlockAll}</>}
         </button>
       </div>
 
       <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 mb-6">
-         <h3 className="font-bold text-slate-800 border-b border-slate-100 pb-3 mb-4 flex items-center gap-2"><CalendarDays size={18} className="text-indigo-500" /> Schedule Tools</h3>
-         <p className="text-sm text-slate-500 font-medium mb-4 leading-relaxed">Load the complete group stage — all 12 groups, 72 matches, set to "scheduled" so everyone can predict them. This replaces the current schedule.</p>
+         <h3 className="font-bold text-slate-800 border-b border-slate-100 pb-3 mb-4 flex items-center gap-2"><CalendarDays size={18} className="text-indigo-500" /> {T.scheduleTools}</h3>
+         <p className="text-sm text-slate-500 font-medium mb-4 leading-relaxed">{T.scheduleToolsBody}</p>
          {confirmSeed ? (
            <div className="flex flex-wrap items-center gap-3 bg-amber-50 border border-amber-200 rounded-2xl p-4">
-             <span className="text-sm font-bold text-amber-800">This wipes the current matches and loads a fresh group stage. Continue?</span>
+             <span className="text-sm font-bold text-amber-800">{T.seedConfirm}</span>
              <div className="flex gap-2 ml-auto">
                <button onClick={handleLoadGroupStage} disabled={isSeeding} className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold px-5 py-2.5 rounded-xl transition-colors">
-                 {isSeeding ? 'Loading...' : 'Yes, load it'}
+                 {isSeeding ? T.loading : T.yesLoad}
                </button>
-               <button onClick={() => setConfirmSeed(false)} disabled={isSeeding} className="bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-bold px-5 py-2.5 rounded-xl transition-colors">Cancel</button>
+               <button onClick={() => setConfirmSeed(false)} disabled={isSeeding} className="bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-bold px-5 py-2.5 rounded-xl transition-colors">{T.cancel}</button>
              </div>
            </div>
          ) : (
            <button onClick={() => setConfirmSeed(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-5 rounded-xl transition-all shadow-md flex items-center gap-2">
-             <CalendarDays size={18} /> Load Full Group Stage
+             <CalendarDays size={18} /> {T.loadGroupStage}
            </button>
          )}
       </div>
 
       <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 mb-6 space-y-4">
-         <h3 className="font-bold text-slate-800 border-b border-slate-100 pb-3 flex items-center gap-2">Edit Player Entries</h3>
+         <h3 className="font-bold text-slate-800 border-b border-slate-100 pb-3 flex items-center gap-2">{T.editEntries}</h3>
          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
            <div>
-             <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Select User</label>
+             <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">{T.selectUser}</label>
              <select value={selectedUser} onChange={e=>setSelectedUser(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
-               <option value="">-- Choose User --</option>
-               {users.map(u => <option key={u.uid} value={u.uid}>{u.displayName || 'Anonymous'}</option>)}
+               <option value="">{T.chooseUser}</option>
+               {users.map(u => <option key={u.uid} value={u.uid}>{(u.displayName || 'Anonymous')} ({docEdition(u).toUpperCase()})</option>)}
              </select>
            </div>
            <div>
-             <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Select Match</label>
+             <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">{T.selectMatch}</label>
              <select value={selectedMatch} onChange={e=>setSelectedMatch(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
-               <option value="">-- Choose Match --</option>
+               <option value="">{T.chooseMatch}</option>
                {matches.map(m => <option key={m.id} value={m.id}>{m.homeTeam} vs {m.awayTeam}</option>)}
              </select>
            </div>
          </div>
          {selectedUser && selectedMatch && (
             <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 mt-4 bg-slate-100/50 p-4 rounded-2xl border border-slate-200">
-               <span className="text-sm font-bold text-slate-600">Modify Prediction:</span>
+               <span className="text-sm font-bold text-slate-600">{T.modifyPrediction}</span>
                <input type="number" min="0" value={editHome} onChange={e=>setEditHome(e.target.value)} className="w-16 border border-slate-300 rounded-lg p-2 text-center font-bold bg-white" placeholder="-" />
                <span className="font-bold text-slate-400">-</span>
                <input type="number" min="0" value={editAway} onChange={e=>setEditAway(e.target.value)} className="w-16 border border-slate-300 rounded-lg p-2 text-center font-bold bg-white" placeholder="-" />
                <button onClick={handleAdminSavePrediction} disabled={isSavingEdit} className="w-full sm:w-auto sm:ml-auto bg-slate-800 hover:bg-slate-900 text-white font-bold py-2.5 px-6 rounded-xl transition-colors">
-                 {isSavingEdit ? 'Saving...' : 'Force Save'}
+                 {isSavingEdit ? T.saving : T.forceSave}
                </button>
             </div>
          )}
       </div>
       
       <form onSubmit={handleAddMatch} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 mb-8 space-y-4">
-        <h3 className="font-bold text-slate-800 border-b border-slate-100 pb-3">Create Match</h3>
+        <h3 className="font-bold text-slate-800 border-b border-slate-100 pb-3">{T.createMatch}</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 pt-2">
           <div>
-            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Home Team</label>
-            <input type="text" value={newHome} onChange={e=>setNewHome(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g. Brazil" />
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">{T.homeTeam}</label>
+            <input type="text" value={newHome} onChange={e=>setNewHome(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder={T.egHome} />
           </div>
           <div>
-            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Away Team</label>
-            <input type="text" value={newAway} onChange={e=>setNewAway(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g. France" />
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">{T.awayTeam}</label>
+            <input type="text" value={newAway} onChange={e=>setNewAway(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder={T.egAway} />
           </div>
           <div>
-            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Stage</label>
-            <input type="text" value={newStage} onChange={e=>setNewStage(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g. Group G" />
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">{T.stageLabel}</label>
+            <input type="text" value={newStage} onChange={e=>setNewStage(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" placeholder={T.egStage} />
           </div>
           <div>
-            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Start Time (Local)</label>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">{T.startTimeLocal}</label>
             <input type="datetime-local" value={newTime} onChange={e=>setNewTime(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
           </div>
         </div>
         <button type="submit" disabled={isAdding} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 px-4 rounded-xl w-full transition-all shadow-md mt-4">
-          {isAdding ? 'Adding Match...' : 'Add Match to Schedule'}
+          {isAdding ? T.addingMatch : T.addMatch}
         </button>
       </form>
 
       <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="p-4 bg-slate-50 border-b border-slate-200 font-bold text-slate-700 text-sm">Match Database</div>
+        <div className="p-4 bg-slate-50 border-b border-slate-200 font-bold text-slate-700 text-sm">{T.matchDatabase}</div>
         {matches.map(m => (
           <div key={m.id} className="border-b border-slate-100 last:border-b-0 p-4 sm:p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex-1 flex items-center gap-3 text-sm font-bold text-slate-800 whitespace-nowrap w-full">
               {confirmDelete === m.id ? (
                 <div className="flex items-center gap-2 mr-2 bg-red-50 p-1.5 rounded-lg border border-red-100">
-                  <span className="text-xs text-red-600 font-bold px-1">Delete?</span>
-                  <button onClick={() => handleDeleteMatch(m.id)} className="bg-red-500 text-white text-xs font-bold px-3 py-1.5 rounded-md hover:bg-red-600 transition-colors">Yes</button>
-                  <button onClick={() => setConfirmDelete(null)} className="bg-slate-200 text-slate-700 text-xs font-bold px-3 py-1.5 rounded-md hover:bg-slate-300 transition-colors">No</button>
+                  <span className="text-xs text-red-600 font-bold px-1">{T.deleteQ}</span>
+                  <button onClick={() => handleDeleteMatch(m.id)} className="bg-red-500 text-white text-xs font-bold px-3 py-1.5 rounded-md hover:bg-red-600 transition-colors">{T.yes}</button>
+                  <button onClick={() => setConfirmDelete(null)} className="bg-slate-200 text-slate-700 text-xs font-bold px-3 py-1.5 rounded-md hover:bg-slate-300 transition-colors">{T.no}</button>
                 </div>
               ) : (
                 <button onClick={() => setConfirmDelete(m.id)} className="text-slate-300 hover:text-red-500 transition-colors bg-slate-50 p-2 rounded-lg">
@@ -697,15 +910,15 @@ const AdminMatchRow = ({ match, onUpdate, onUpdateTime }) => {
           <input type="number" value={a} onChange={e=>setA(e.target.value)} className="w-12 h-10 border border-slate-300 rounded-lg text-center font-bold focus:border-indigo-500 outline-none" placeholder="-" />
         </div>
         <div className="flex gap-2 ml-4">
-           <button onClick={() => onUpdate(match.id, h, a, 'finished')} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-2.5 rounded-lg shadow-sm transition-colors">Set Final</button>
-           <button onClick={() => onUpdate(match.id, null, null, 'scheduled')} className="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold px-3 py-2.5 rounded-lg transition-colors">Reset</button>
+           <button onClick={() => onUpdate(match.id, h, a, 'finished')} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-2.5 rounded-lg shadow-sm transition-colors">{T.setFinal}</button>
+           <button onClick={() => onUpdate(match.id, null, null, 'scheduled')} className="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold px-3 py-2.5 rounded-lg transition-colors">{T.reset}</button>
         </div>
       </div>
       {/* Kickoff time row */}
       <div className="flex gap-2 items-center justify-between sm:justify-end">
         <input type="datetime-local" value={t} onChange={e=>setT(e.target.value)} className="h-10 border border-slate-300 rounded-lg px-2 text-xs font-medium focus:border-indigo-500 outline-none bg-white" />
         <button onClick={saveTime} className={`text-xs font-bold px-3 py-2.5 rounded-lg transition-colors ${savedTime ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-800 hover:bg-slate-900 text-white'}`}>
-          {savedTime ? 'Saved ✓' : 'Save Time'}
+          {savedTime ? T.savedTime : T.saveTime}
         </button>
       </div>
     </div>
@@ -720,7 +933,7 @@ const AdminMatchRow = ({ match, onUpdate, onUpdateTime }) => {
 // the viewer sees their own pick. This page never writes any data.
 const AllPicksTab = ({ matches, predictions, users, currentUser, disableLocks }) => {
   const nameFor = (uid) => users.find(u => u.uid === uid)?.displayName || 'Player';
-  const picksFor = (matchId) => predictions.filter(p => p.matchId === matchId && p.uid !== ADMIN_ACCOUNT_ID);
+  const picksFor = (matchId) => predictions.filter(p => p.matchId === matchId && docEdition(p) === EDITION && p.uid !== EDITION_ADMIN_ID);
 
   // Match the Pitch page ordering exactly: "Live & Upcoming" first (soonest
   // kickoff first), then "Finished" (most recently finished first). The
@@ -747,9 +960,9 @@ const AllPicksTab = ({ matches, predictions, users, currentUser, disableLocks })
             <CalendarDays size={14} className="text-slate-400" /> {m.stage}
           </span>
           {isFinished ? (
-            <span className="flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full bg-blue-100 text-blue-800"><CheckCircle size={14} /> Full Time</span>
+            <span className="flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full bg-blue-100 text-blue-800"><CheckCircle size={14} /> {T.fullTime}</span>
           ) : (
-            <span className="flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full bg-gray-200 text-gray-600"><Lock size={14} /> Locked</span>
+            <span className="flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full bg-gray-200 text-gray-600"><Lock size={14} /> {T.locked}</span>
           )}
         </div>
 
@@ -762,14 +975,14 @@ const AllPicksTab = ({ matches, predictions, users, currentUser, disableLocks })
         </div>
 
         {rows.length === 0 ? (
-          <p className="text-center text-sm text-slate-400 italic py-3">No predictions for this match.</p>
+          <p className="text-center text-sm text-slate-400 italic py-3">{T.noPredForMatch}</p>
         ) : (
           <div className="space-y-1.5">
             {rows.map(r => (
               <div key={r.uid} className={`flex items-center justify-between rounded-xl px-3 py-2 ${r.uid === currentUser.uid ? 'bg-indigo-50' : 'bg-slate-50'}`}>
                 <span className="font-bold text-slate-700 text-sm flex items-center gap-2 truncate min-w-0">
                   <span className="truncate">{r.name}</span>
-                  {r.uid === currentUser.uid && <span className="px-1.5 py-0.5 rounded text-[9px] uppercase font-bold bg-indigo-100 text-indigo-700 tracking-wider shrink-0">You</span>}
+                  {r.uid === currentUser.uid && <span className="px-1.5 py-0.5 rounded text-[9px] uppercase font-bold bg-indigo-100 text-indigo-700 tracking-wider shrink-0">{T.you}</span>}
                 </span>
                 <div className="flex items-center gap-3 shrink-0">
                   <span className="font-black text-slate-800 text-sm tabular-nums">{r.homeScore}–{r.awayScore}</span>
@@ -790,20 +1003,20 @@ const AllPicksTab = ({ matches, predictions, users, currentUser, disableLocks })
   return (
     <div className="pb-8 animate-in fade-in duration-500">
       <div className="mb-8 text-center sm:text-left">
-        <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight mb-2">Everyone's Picks</h2>
-        <p className="text-slate-500 text-sm font-medium">Every player's prediction is visible here, for every match.</p>
+        <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight mb-2">{T.picksTitle}</h2>
+        <p className="text-slate-500 text-sm font-medium">{T.picksSubtitle}</p>
       </div>
 
       {matches.length === 0 && (
         <div className="bg-white rounded-3xl border border-slate-200 p-10 text-center text-slate-500 font-medium mb-8">
-          No matches scheduled yet.
+          {T.noMatches}
         </div>
       )}
 
       {upcoming.length > 0 && (
         <div className="mb-8">
           <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-indigo-500"></span> Live & Upcoming
+            <span className="w-2 h-2 rounded-full bg-indigo-500"></span> {T.liveUpcoming}
           </h3>
           {upcoming.map(renderMatchCard)}
         </div>
@@ -812,7 +1025,7 @@ const AllPicksTab = ({ matches, predictions, users, currentUser, disableLocks })
       {finished.length > 0 && (
         <div>
           <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2 mt-10">
-            <span className="w-2 h-2 rounded-full bg-slate-300"></span> Finished Matches
+            <span className="w-2 h-2 rounded-full bg-slate-300"></span> {T.finishedMatches}
           </h3>
           {finished.map(renderMatchCard)}
         </div>
@@ -831,8 +1044,8 @@ const LoginScreen = ({ onLogin, busy }) => {
   const submit = async () => {
     setError('');
     const cleanName = name.trim();
-    if (slugify(cleanName).length === 0) { setError('Please enter a name using letters or numbers.'); return; }
-    if (!/^\d{4}$/.test(pin)) { setError('Your PIN must be exactly 4 digits.'); return; }
+    if (slugify(cleanName).length === 0) { setError(T.errEnterName); return; }
+    if (!/^\d{4}$/.test(pin)) { setError(T.errPin); return; }
     const result = await onLogin(cleanName, pin);
     if (result && !result.ok) setError(result.error);
   };
@@ -844,23 +1057,23 @@ const LoginScreen = ({ onLogin, busy }) => {
           <div className="inline-flex bg-white/10 backdrop-blur-md p-4 rounded-2xl border border-white/20 shadow-inner mb-4">
             <Trophy size={32} className="text-yellow-400" />
           </div>
-          <h1 className="text-3xl font-black text-white tracking-tight">WC Predictor <span className="text-indigo-300 font-light">26</span></h1>
-          <p className="text-indigo-200 text-sm font-medium mt-3 leading-relaxed">Enter your name and a 4-digit PIN to start. Use the same details to log back in from any device.</p>
+          <h1 className="text-3xl font-black text-white tracking-tight">WC Predictor <span className="text-indigo-300 font-light">{T.appTitleSuffix}</span></h1>
+          <p className="text-indigo-200 text-sm font-medium mt-3 leading-relaxed">{T.loginSubtitle}</p>
         </div>
 
         <div className="bg-white rounded-3xl shadow-2xl p-7 space-y-5">
           <div>
-            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Your Name</label>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">{T.yourName}</label>
             <input
               type="text" value={name}
               onChange={e => setName(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') submit(); }}
               className="w-full bg-slate-50 border-2 border-slate-200 rounded-2xl p-4 font-bold text-slate-800 focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all"
-              placeholder="e.g. Adam"
+              placeholder={T.egName}
             />
           </div>
           <div>
-            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">4-Digit PIN</label>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">{T.pinLabel}</label>
             <input
               type="password" inputMode="numeric" maxLength={4} value={pin}
               onChange={e => setPin(e.target.value.replace(/\D/g, ''))}
@@ -878,11 +1091,11 @@ const LoginScreen = ({ onLogin, busy }) => {
             onClick={submit} disabled={busy}
             className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-bold py-4 rounded-2xl w-full transition-all shadow-lg shadow-indigo-600/30 active:scale-[0.98] flex items-center justify-center gap-2"
           >
-            {busy ? <span className="animate-pulse">Connecting...</span> : <><KeyRound size={18} /> Enter Pool</>}
+            {busy ? <span className="animate-pulse">{T.connecting}</span> : <><KeyRound size={18} /> {T.enterPool}</>}
           </button>
 
           <p className="text-xs text-slate-400 text-center font-medium leading-relaxed">
-            New name? You'll be registered automatically.<br />Returning? Enter the same name and PIN.
+            {T.loginFooterNew}<br />{T.loginFooterReturn}
           </p>
         </div>
       </div>
@@ -925,7 +1138,7 @@ export default function App() {
         }
         // onAuthStateChanged fires again automatically with the new user.
       } catch (err) {
-        setAppError(`Authentication Failed: ${err.message}`);
+        setAppError(T.authFailed(err.message));
         setIsLoading(false);
       }
     });
@@ -948,7 +1161,7 @@ export default function App() {
         } else {
           setMatches(data.sort((a,b) => new Date(a.startTime) - new Date(b.startTime)));
         }
-      }, err => { setAppError(`Database Access Denied: ${err.message}`); setIsLoading(false); }));
+      }, err => { setAppError(T.dbDenied(err.message)); setIsLoading(false); }));
 
       const predsRef = collection(db, 'artifacts', appId, 'public', 'data', 'predictions');
       unsubs.push(onSnapshot(predsRef, (snap) => {
@@ -963,7 +1176,7 @@ export default function App() {
         snap.forEach(d => data.push(d.data()));
         setUsers(data);
         setIsLoading(false); 
-      }, err => { setAppError(`Database Access Denied: ${err.message}`); setIsLoading(false); }));
+      }, err => { setAppError(T.dbDenied(err.message)); setIsLoading(false); }));
 
       const settingsRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global');
       unsubs.push(onSnapshot(settingsRef, (snap) => {
@@ -971,7 +1184,7 @@ export default function App() {
       }));
 
     } catch (error) {
-      setAppError(`Unexpected setup error: ${error.message}`);
+      setAppError(T.setupError(error.message));
       setIsLoading(false);
     }
     return () => unsubs.forEach(unsub => unsub());
@@ -981,31 +1194,31 @@ export default function App() {
      if (!activeAccountId) return;
      const predRef = doc(db, 'artifacts', appId, 'public', 'data', 'predictions', `${activeAccountId}_${matchId}`);
      await setDoc(predRef, {
-        uid: activeAccountId, matchId, homeScore: hScore, awayScore: aScore, updatedAt: new Date().toISOString()
+        uid: activeAccountId, matchId, homeScore: hScore, awayScore: aScore, edition: EDITION, updatedAt: new Date().toISOString()
      }, { merge: true });
   };
 
   const handleLogin = async (rawName, pin) => {
-     if (!firebaseUser) return { ok: false, error: 'Still connecting — try again in a moment.' };
+     if (!firebaseUser) return { ok: false, error: T.stillConnecting };
      setLoginBusy(true);
      try {
         const displayName = rawName.trim();
-        const accountId = slugify(displayName);
+        const accountId = EDITION_PREFIX + slugify(displayName);
         const pinHash = await hashPin(pin, accountId);
         const accountRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', accountId);
         const existing = await getDoc(accountRef);
         if (existing.exists()) {
            if (existing.data().pinHash !== pinHash) {
-              return { ok: false, error: 'That name is already taken and the PIN does not match.' };
+              return { ok: false, error: T.nameTaken };
            }
         } else {
-           await setDoc(accountRef, { uid: accountId, displayName, pinHash, createdAt: new Date().toISOString() });
+           await setDoc(accountRef, { uid: accountId, displayName, pinHash, edition: EDITION, createdAt: new Date().toISOString() });
         }
         try { localStorage.setItem(ACCOUNT_STORAGE_KEY, accountId); } catch { /* storage blocked */ }
         setActiveAccountId(accountId);
         return { ok: true };
      } catch (err) {
-        return { ok: false, error: `Login failed: ${err.message}` };
+        return { ok: false, error: T.loginFailed(err.message) };
      } finally {
         setLoginBusy(false);
      }
@@ -1022,7 +1235,7 @@ export default function App() {
       <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 p-6 text-center">
         <div className="bg-white p-8 rounded-3xl max-w-lg border border-red-100 shadow-xl shadow-red-100/50">
           <ShieldAlert size={48} className="text-red-500 mx-auto mb-4" />
-          <h2 className="text-xl font-extrabold text-slate-800 mb-2">Configuration Error</h2>
+          <h2 className="text-xl font-extrabold text-slate-800 mb-2">{T.configError}</h2>
           <p className="text-sm text-slate-600 font-medium mb-6">{appError}</p>
         </div>
       </div>
@@ -1032,7 +1245,7 @@ export default function App() {
   const spinner = (
     <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50">
        <div className="w-16 h-16 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-4"></div>
-       <div className="text-indigo-900 font-bold tracking-widest uppercase text-sm animate-pulse">Warming up the pitch...</div>
+       <div className="text-indigo-900 font-bold tracking-widest uppercase text-sm animate-pulse">{T.spinner}</div>
     </div>
   );
 
@@ -1043,7 +1256,7 @@ export default function App() {
   const currentUserDoc = users.find(u => u.uid === activeAccountId);
   const displayName = currentUserDoc?.displayName || 'Player';
   const user = { uid: activeAccountId, displayName };
-  const isAdmin = activeAccountId === ADMIN_ACCOUNT_ID;
+  const isAdmin = activeAccountId === EDITION_ADMIN_ID;
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans selection:bg-indigo-200 text-slate-800">
@@ -1056,7 +1269,7 @@ export default function App() {
               <Trophy size={22} className="text-yellow-400" />
             </div>
             <div>
-              <h1 className="text-xl font-black tracking-tight leading-tight">WC Predictor <span className="text-indigo-300 font-light">26</span></h1>
+              <h1 className="text-xl font-black tracking-tight leading-tight">WC Predictor <span className="text-indigo-300 font-light">{T.appTitleSuffix}</span></h1>
             </div>
           </div>
           <div onClick={() => setActiveTab('profile')} className="bg-white/10 hover:bg-white/20 backdrop-blur-md px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 border border-white/10 cursor-pointer transition-colors">
@@ -1079,12 +1292,12 @@ export default function App() {
       {/* Glassmorphism Bottom Nav */}
       <nav className="fixed bottom-0 w-full z-40 px-4 pb-safe pt-2 pointer-events-none">
          <div className="max-w-md mx-auto bg-white/80 backdrop-blur-xl border border-white shadow-[0_-8px_30px_-10px_rgba(0,0,0,0.1)] rounded-t-3xl sm:rounded-full sm:mb-6 flex justify-around p-2 pointer-events-auto">
-            <NavButton icon={<Activity size={22}/>} label="Predict" active={activeTab === 'matches'} onClick={()=>setActiveTab('matches')} />
-            <NavButton icon={<Trophy size={22}/>} label="Standings" active={activeTab === 'leaderboard'} onClick={()=>setActiveTab('leaderboard')} />
-            <NavButton icon={<Users size={22}/>} label="Picks" active={activeTab === 'picks'} onClick={()=>setActiveTab('picks')} />
-            <NavButton icon={<Info size={22}/>} label="Rules" active={activeTab === 'rules'} onClick={()=>setActiveTab('rules')} />
-            <NavButton icon={<User size={22}/>} label="Profile" active={activeTab === 'profile'} onClick={()=>setActiveTab('profile')} />
-            {isAdmin && <NavButton icon={<Settings size={22}/>} label="Admin" active={activeTab === 'admin'} onClick={()=>setActiveTab('admin')} />}
+            <NavButton icon={<Activity size={22}/>} label={T.nav.predict} active={activeTab === 'matches'} onClick={()=>setActiveTab('matches')} />
+            <NavButton icon={<Trophy size={22}/>} label={T.nav.standings} active={activeTab === 'leaderboard'} onClick={()=>setActiveTab('leaderboard')} />
+            <NavButton icon={<Users size={22}/>} label={T.nav.picks} active={activeTab === 'picks'} onClick={()=>setActiveTab('picks')} />
+            <NavButton icon={<Info size={22}/>} label={T.nav.rules} active={activeTab === 'rules'} onClick={()=>setActiveTab('rules')} />
+            <NavButton icon={<User size={22}/>} label={T.nav.profile} active={activeTab === 'profile'} onClick={()=>setActiveTab('profile')} />
+            {isAdmin && <NavButton icon={<Settings size={22}/>} label={T.nav.admin} active={activeTab === 'admin'} onClick={()=>setActiveTab('admin')} />}
          </div>
       </nav>
     </div>
