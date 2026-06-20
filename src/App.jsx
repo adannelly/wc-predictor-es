@@ -698,22 +698,7 @@ const AdminPanel = ({ matches, users, predictions, globalSettings }) => {
   const [editHome, setEditHome] = useState('');
   const [editAway, setEditAway] = useState('');
   const [isSavingEdit, setIsSavingEdit] = useState(false);
-  const [confirmSeed, setConfirmSeed] = useState(false);
-  const [isSeeding, setIsSeeding] = useState(false);
 
-  const handleLoadGroupStage = async () => {
-    setIsSeeding(true);
-    const matchesRef = collection(db, 'artifacts', appId, 'public', 'data', 'matches');
-    // Clear the current schedule, then write the full clean group stage.
-    for (const m of matches) {
-      await deleteDoc(doc(matchesRef, m.id));
-    }
-    for (const m of buildGroupStage()) {
-      await setDoc(doc(matchesRef, m.id), m);
-    }
-    setIsSeeding(false);
-    setConfirmSeed(false);
-  };
 
   useEffect(() => {
     if (selectedUser && selectedMatch) {
@@ -780,26 +765,6 @@ const AdminPanel = ({ matches, users, predictions, globalSettings }) => {
         >
            {globalSettings?.disableLocks ? <><Lock size={16}/> {T.reEnableLocks}</> : <><Lock size={16} className="opacity-50"/> {T.unlockAll}</>}
         </button>
-      </div>
-
-      <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 mb-6">
-         <h3 className="font-bold text-slate-800 border-b border-slate-100 pb-3 mb-4 flex items-center gap-2"><CalendarDays size={18} className="text-indigo-500" /> {T.scheduleTools}</h3>
-         <p className="text-sm text-slate-500 font-medium mb-4 leading-relaxed">{T.scheduleToolsBody}</p>
-         {confirmSeed ? (
-           <div className="flex flex-wrap items-center gap-3 bg-amber-50 border border-amber-200 rounded-2xl p-4">
-             <span className="text-sm font-bold text-amber-800">{T.seedConfirm}</span>
-             <div className="flex gap-2 ml-auto">
-               <button onClick={handleLoadGroupStage} disabled={isSeeding} className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold px-5 py-2.5 rounded-xl transition-colors">
-                 {isSeeding ? T.loading : T.yesLoad}
-               </button>
-               <button onClick={() => setConfirmSeed(false)} disabled={isSeeding} className="bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-bold px-5 py-2.5 rounded-xl transition-colors">{T.cancel}</button>
-             </div>
-           </div>
-         ) : (
-           <button onClick={() => setConfirmSeed(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-5 rounded-xl transition-all shadow-md flex items-center gap-2">
-             <CalendarDays size={18} /> {T.loadGroupStage}
-           </button>
-         )}
       </div>
 
       <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 mb-6 space-y-4">
@@ -1153,14 +1118,10 @@ export default function App() {
       unsubs.push(onSnapshot(matchesRef, (snap) => {
         const data = [];
         snap.forEach(d => data.push(d.data()));
-        if (data.length === 0) {
-          const seedMatches = async () => {
-             for (const m of INITIAL_MATCHES) await setDoc(doc(matchesRef, m.id), m);
-          };
-          seedMatches();
-        } else {
-          setMatches(data.sort((a,b) => new Date(a.startTime) - new Date(b.startTime)));
-        }
+        // Matches are entered manually by the admin. Whatever exists is shown,
+        // sorted by kickoff; an empty schedule simply shows nothing until the
+        // admin adds matches (no auto-population).
+        setMatches(data.sort((a,b) => new Date(a.startTime) - new Date(b.startTime)));
       }, err => { setAppError(T.dbDenied(err.message)); setIsLoading(false); }));
 
       const predsRef = collection(db, 'artifacts', appId, 'public', 'data', 'predictions');
